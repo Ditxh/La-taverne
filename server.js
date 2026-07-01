@@ -1,127 +1,111 @@
-// ════════════════════════════════════════════════════════════════
-//  GESTION DES UTILISATEURS — stockage fichier JSON (simple, suffisant
-//  pour démarrer ; migrable vers une vraie DB plus tard sans douleur
-//  car toute la logique passe par les fonctions de ce module)
-// ════════════════════════════════════════════════════════════════
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+const express = require('express');
+const http = require('http');
+const cors = require('cors');
+const { Server } = require('socket.io');
 
-const DATA_FILE = path.join(__dirname, 'data', 'users.json');
+let users, mm, liars;
 
-function ensureDataDir() {
-  const dir = path.dirname(DATA_FILE);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, '{}');
+// Debug des imports
+try {
+users = require('./users');
+console.log('✅ users.js chargé');
+} catch (e) {
+console.error('❌ Erreur users.js:', e);
 }
 
-function loadUsers() {
-  ensureDataDir();
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
-  } catch (e) {
-    console.error('Erreur lecture users.json:', e.message);
-    return {};
-  }
+try {
+mm = require('./matchmaking');
+console.log('✅ matchmaking.js chargé');
+} catch (e) {
+console.error('❌ Erreur matchmaking.js:', e);
 }
 
-let _usersCache = null;
-let _saveTimer = null;
-
-function getUsers() {
-  if (!_usersCache) _usersCache = loadUsers();
-  return _usersCache;
+try {
+liars = require('./games/liars');
+console.log('✅ games/liars.js chargé');
+} catch (e) {
+console.error('❌ Erreur games/liars.js:', e);
 }
 
-function saveUsers() {
-  // Debounce les écritures disque pour éviter le martelage si plusieurs
-  // évènements arrivent dans la même milliseconde
-  clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(() => {
-    try {
-      fs.writeFileSync(DATA_FILE, JSON.stringify(_usersCache, null, 2));
-    } catch (e) {
-      console.error('Erreur écriture users.json:', e.message);
-    }
-  }, 200);
+const PORT = process.env.PORT || 3000;
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const server = http.createServer(app);
+const io = new Server(server, {
+cors: { origin: '*', methods: ['GET', 'POST'] },
+});
+
+app.get('/', (req, res) => {
+res.json({
+status: 'ok',
+message: 'Serveur La Taverne des Jeux actif.'
+});
+});
+
+function sanitizeUser(u) {
+if (!u) return null;
+const { password, ...rest } = u;
+return rest;
 }
 
-function hashPassword(pw) {
-  return crypto.createHash('sha256').update(pw).digest('hex');
+// API Auth
+app.post('/api/register', (req, res) => {
+const { id, name, password } = req.body;
+
+if (!id || !name || !password) {
+return res.status(400).json({ error: 'Champs manquants.' });
 }
 
-function getUser(id) {
-  return getUsers()[id] || null;
+const result = users.createUser(
+id.toLowerCase().trim(),
+name.trim(),
+password
+);
+
+if (result.error) {
+return res.status(409).json({ error: result.error });
 }
 
-function createUser(id, name, password) {
-  const users = getUsers();
-  if (users[id]) return { error: 'Ce pseudonyme est déjà pris.' };
-  users[id] = {
-    name,
-    password: hashPassword(password),
-    coins: 200,
-    xp: 0,
-    wins: 0,
-    losses: 0,
-    games: 0,
-    totalScore: 0,
-    winStreak: 0,
-    bestStreak: 0,
-    gChess: { games: 0, wins: 0, draws: 0 },
-    gStb: { games: 0, wins: 0, best: null },
-    gLd: { games: 0, wins: 0, best: 0 },
-    gameHistory: [],
-    weeklyScores: {},
-    seasons: {},
-    created: Date.now(),
-    lastSeen: Date.now(),
-  };
-  saveUsers();
-  return { user: users[id] };
+res.json({ user: sanitizeUser(result.user) });
+});
+
+app.post('/api/login', (req, res) => {
+const { id, password } = req.body;
+
+if (!id || !password) {
+return res.status(400).json({ error: 'Champs manquants.' });
 }
 
-function verifyUser(id, password) {
-  const user = getUser(id);
-  if (!user) return { error: 'Pseudonyme introuvable.' };
-  if (user.password !== hashPassword(password)) return { error: 'Mot de passe incorrect.' };
-  return { user };
+const result = users.verifyUser(
+id.toLowerCase().trim(),
+password
+);
+
+if (result.error) {
+return res.status(401).json({ error: result.error });
 }
 
-function updateUser(id, patch) {
-  const users = getUsers();
-  if (!users[id]) return null;
-  Object.assign(users[id], patch);
-  users[id].lastSeen = Date.now();
-  saveUsers();
-  return users[id];
+res.json({ user: sanitizeUser(result.user) });
+});
+
+// Socket.io
+io.on('connection', (socket) => {
+console.log('Connexion:', socket.id);
+
+socket.on('disconnect', () => {
+console.log('Déconnexion:', socket.id);
+});
+});
+
+// Vérifie que tout est bien chargé avant de lancer
+if (!users || !mm || !liars) {
+console.error('❌ Un ou plusieurs modules sont cassés.');
+process.exit(1);
 }
 
-function getSkillScore(ud) {
-  if (!ud) return 0;
-  const pk = (ud.games && typeof ud.games === 'object' ? ud.games.poker : null) || {};
-  const ch = ud.gChess || {};
-  const stb = ud.gStb || {};
-  const ld = ud.gLd || {};
-  const fkW = ud.wins || 0;
-  const fkG = typeof ud.games === 'number' ? ud.games : 0;
-  const totalW = fkW + (pk.wins || 0) + (ch.wins || 0) + (stb.wins || 0) + (ld.wins || 0);
-  const totalG = fkG + (pk.games || 0) + (ch.games || 0) + (stb.games || 0) + (ld.games || 0);
-  const wr = totalG > 0 ? totalW / totalG : 0.5;
-  const level = getLevelFromXP(ud.xp || 0);
-  return Math.round(wr * 500 + level * 30 + totalW * 2);
-}
-
-const XP_LEVELS = [0,100,250,500,900,1400,2000,2800,3800,5000,7000,10000];
-function getLevelFromXP(xp) {
-  let lvl = 1;
-  for (let i = 0; i < XP_LEVELS.length; i++) {
-    if (xp >= XP_LEVELS[i]) lvl = i + 1;
-  }
-  return lvl;
-}
-
-module.exports = {
-  getUsers, getUser, createUser, verifyUser, updateUser,
-  getSkillScore, getLevelFromXP, saveUsers,
-};
+server.listen(PORT, () => {
+console.log(`✅ Serveur lancé sur le port ${PORT}`);
+});
