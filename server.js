@@ -19,12 +19,12 @@ cors: { origin: '*', methods: ['GET', 'POST'] },
 });
 
 // API REST
+app.use(express.static(__dirname));
+
 app.get('/', (req, res) => {
-res.json({
-status: 'ok',
-message: 'Serveur La Taverne des Jeux actif.'
+res.sendFile(__dirname + '/index.html');
 });
-});
+
 
 function sanitizeUser(u) {
 const { password, ...rest } = u;
