@@ -1,13 +1,13 @@
 {
 "name": "taverne-des-jeux",
 "version": "1.0.0",
-"description": "La Taverne des Jeux multijoueur",
 "main": "server.js",
 "scripts": {
 "start": "node server.js"
 },
 "dependencies": {
 "express": "^4.21.0",
-"socket.io": "^4.8.0"
+"socket.io": "^4.8.0",
+"cors": "^2.8.5"
 }
 }
