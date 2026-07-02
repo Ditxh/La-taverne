@@ -10700,11 +10700,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── Configuration ─────────────────────────────────────────────────
 // Mets l'URL de ton serveur Render ici après déploiement
 // En dev local : http://localhost:3001
-const SERVER_URL = (
-  window.location.hostname === 'localhost' ||
-  window.location.hostname === '127.0.0.1'
-) ? 'http://localhost:3001'
-  : 'https://taverne-des-jeux.onrender.com'; // << REMPLACE par ton URL Render
+const SERVER_URL = window.location.origin;
 
 // ── État global de la connexion ────────────────────────────────────
 let sock = null;
